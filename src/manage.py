@@ -10,6 +10,11 @@ import os_client_config
 import requests
 import yaml
 
+import urllib.request
+import shutil
+import subprocess
+import os
+
 PROJECT_NAME = 'images'
 CONF = cfg.CONF
 opts = [
@@ -20,6 +25,7 @@ opts = [
     cfg.BoolOpt('hide', help='Hide images that should be deleted', default=False),
     cfg.BoolOpt('latest', help='Only import the latest version of images from type multi', default=True),
     cfg.BoolOpt('yes-i-really-know-what-i-do', help='Really delete images', default=False),
+    cfg.BoolOpt('local-processing', help='Decompress and convert images locally', default=False),
     cfg.StrOpt('cloud', help='Cloud name in clouds.yaml', default='images'),
     cfg.StrOpt('name', help='Image name to process', default=None),
     cfg.StrOpt('images', help='Path to the images.yml file', default='etc/images.yml'),
@@ -48,6 +54,59 @@ with open(CONF.images) as fp:
 
 conn = openstack.connect(cloud=CONF.cloud)
 glance = os_client_config.make_client("image", cloud=CONF.cloud)
+
+
+def process_local_image(glance, name, image, url):
+    logging.info("Create glance image '%s'" % name)
+    image_properties = {
+        'container_format': 'bare',
+        'disk_format': image['format'],
+        'min_disk': image.get('min_disk', 0),
+        'min_ram': image.get('min_ram', 0),
+        'name': name,
+        'tags': [CONF.tag],
+        'visibility': 'private'
+    }
+
+    file_name = url.split('/')[-1]
+    tmp_image = os.getcwd() + '/' + file_name
+    tmp_image_raw = tmp_image + '.raw'
+    logging.info("Downloading image for convertion and/or decompression: '%s'" % name)
+    with urllib.request.urlopen(url) as response, open(tmp_image, 'wb') as out_file:
+        shutil.copyfileobj(response, out_file)
+
+    if file_name.endswith(".xz"):
+        logging.info("Unsupported file format, next image")
+        new_file_name = file_name[:-3]
+        new_tmp_image = os.getcwd() + '/' + new_file_name
+        with open(new_tmp_image, 'xb', 0) as uncompressed_file:
+            subprocess.call(["xzcat", tmp_image], stdout=uncompressed_file)
+        subprocess.run(['rm', tmp_image])
+        file_name = new_file_name
+        tmp_image = new_tmp_image
+
+    if image['format'] == 'qcow2':
+        logging.info("Converting image into raw format")
+        subprocess.run(["qemu-img", "convert", "-f", "qcow2", "-O", "raw",
+                        tmp_image, tmp_image_raw])
+        image_properties['disk_format'] = 'raw'
+
+    logging.info("Creating Glance image")
+    image = glance.images.create(name=name)
+    glance.images.update(image.id, **image_properties)
+    glance.images.upload(image.id, open(tmp_image_raw, 'rb'))
+    image_info = glance.images.get(image.id)
+
+    logging.info("Delete downloaded and converted images")
+    subprocess.run(['rm', tmp_image, tmp_image_raw])
+
+    if image_info['status'] == 'active':
+        status = 'success'
+    else:
+        status = 'failure'
+
+    logging.info("Image for '%s' is created, status is '%s'" % (name, status))
+    return status
 
 
 def create_import_task(glance, name, image, url):
@@ -182,7 +241,10 @@ for image in images:
                 continue
 
             if not CONF.dry_run:
-                status = create_import_task(glance, name, image, url)
+                if CONF.local_processing:
+                    status = process_local_image(glance, name, image, url)
+                else:
+                    status = create_import_task(glance, name, image, url)
             else:
                 status = 'dry-run'
 
