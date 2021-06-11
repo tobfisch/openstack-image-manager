@@ -28,6 +28,7 @@ opts = [
     cfg.BoolOpt('test-latest-image', help='Test the latest uploaded image', default=False),
     cfg.StrOpt('network', help='Network which should be used for the test instances', default='floating-IPv4'),
     cfg.StrOpt('flavor', help='Flavor which should be used for the test instances', default='S'),
+    cfg.BoolOpt('local-processing', help='Decompress and convert images locally', default=False),
     cfg.StrOpt('cloud', help='Cloud name in clouds.yaml', default='images'),
     cfg.StrOpt('name', help='Image name to process', default=None),
     cfg.StrOpt('images', help='Path to the images.yml file', default='etc/images.yml'),
@@ -128,6 +129,67 @@ def test_image(conn, image, name):
         return False
 
 
+def process_local_image(glance, name, image, url):
+    logging.info("Create glance image '%s'" % name)
+    image_properties = {
+        'container_format': 'bare',
+        'disk_format': image['format'],
+        'min_disk': image.get('min_disk', 0),
+        'min_ram': image.get('min_ram', 0),
+        'name': name,
+        'tags': [CONF.tag],
+        'visibility': 'private'
+    }
+
+    file_name = url.split('/')[-1]
+    tmp_image = pathlib.Path.cwd() / file_name
+    tmp_image_raw = tmp_image.with_suffix('.raw')
+    logging.info("Downloading image for conversion and/or decompression: '%s'" % name)
+    with requests.get(url, stream=True) as response:
+        response.raise_for_status()
+        with open(tmp_image, 'wb') as out_file:
+            for chunk in response.iter_content(chunk_size=None):
+                out_file.write(chunk)
+
+    if tmp_image.suffix not in ['.xz', '.qcow2', '.raw']:
+        raise RuntimeError("Unsupported file format")
+
+    if tmp_image.suffix == ".xz":
+        logging.info("Decompressing image in xz format")
+        new_file_name = file_name[:-3]
+        new_tmp_image = pathlib.Path.cwd() / new_file_name
+        with open(new_tmp_image, 'xb', 0) as uncompressed_file:
+            subprocess.run(["xzcat", tmp_image], stdout=uncompressed_file, check=True)
+        os.unlink(tmp_image)
+        file_name = new_file_name
+        tmp_image = new_tmp_image
+
+    if image['format'] == 'qcow2':
+        logging.info("Converting image into raw format")
+        subprocess.run(["qemu-img", "convert", "-f", "qcow2", "-O", "raw",
+                        tmp_image, tmp_image_raw], check=True)
+        image_properties['disk_format'] = 'raw'
+
+    logging.info("Creating Glance image")
+    image = glance.images.create(name=name)
+    glance.images.update(image.id, **image_properties)
+    with open(tmp_image_raw, 'rb') as f:
+        glance.images.upload(image.id, f)
+    image_info = glance.images.get(image.id)
+
+    logging.info("Delete downloaded and converted images")
+    os.unlink(tmp_image)
+    os.unlink(tmp_image_raw)
+
+    if image_info['status'] == 'active':
+        status = True
+    else:
+        status = False
+
+    logging.info("Image for '%s' is created, status is '%s'" % (name, status))
+    return status
+
+
 def create_import_task(glance, name, image, url):
     logging.info("Creating import task '%s'" % name)
 
@@ -162,7 +224,10 @@ def create_import_task(glance, name, image, url):
 
     logging.info("Import task for '%s' finished with status '%s'" % (name, status))
 
-    return status
+    if status == 'success':
+        return True
+    else:
+        return False
 
 
 def get_images(conn, glance):
@@ -272,18 +337,21 @@ for image in images:
                 continue
 
             if not CONF.dry_run:
-                status = create_import_task(glance, name, image, url)
+                if CONF.local_processing:
+                    status = process_local_image(glance, name, image, url)
+                else:
+                    status = create_import_task(glance, name, image, url)
             else:
-                status = 'dry-run'
+                status = True
 
-            if status == 'success':
+            if status and not CONF.dry_run:
                 logging.info("Import of '%s' successfully completed, reload images" % name)
                 cloud_images = get_images(conn, glance)
 
                 if version == sorted_versions[-1]:
                     uploaded_new_latest_image = True
 
-            if status in ['dry-run', 'success']:
+            if status:
                 existing_images.append(name)
         elif CONF.latest and version != sorted_versions[-1]:
             logging.info("Skipping image '%s' (only importing the latest version of images from type multi)" % name)
