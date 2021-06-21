@@ -138,7 +138,9 @@ def process_local_image(glance, name, image, url):
         'min_ram': image.get('min_ram', 0),
         'name': name,
         'tags': [CONF.tag],
-        'visibility': 'private'
+        'visibility': 'private',
+        'hw_vm_mode': 'hvm',
+        'img_hv_type': 'kvm'
     }
 
     file_name = url.split('/')[-1]
