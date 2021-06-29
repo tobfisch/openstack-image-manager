@@ -2,6 +2,10 @@ from decimal import Decimal, ROUND_UP
 import logging
 import sys
 import time
+import os
+import pathlib
+import errno
+import subprocess
 
 from natsort import natsorted
 from oslo_config import cfg
@@ -21,6 +25,9 @@ opts = [
     cfg.BoolOpt('latest', help='Only import the latest version of images from type multi', default=True),
     cfg.BoolOpt('yes-i-really-know-what-i-do', help='Really delete images', default=False),
     cfg.BoolOpt('use-os-hidden', help='Use the os_hidden property', default=False),
+    cfg.BoolOpt('test-latest-image', help='Test the latest uploaded image', default=False),
+    cfg.StrOpt('network', help='Network which should be used for the test instances', default='floating-IPv4'),
+    cfg.StrOpt('flavor', help='Flavor which should be used for the test instances', default='S'),
     cfg.StrOpt('cloud', help='Cloud name in clouds.yaml', default='images'),
     cfg.StrOpt('name', help='Image name to process', default=None),
     cfg.StrOpt('images', help='Path to the images.yml file', default='etc/images.yml'),
@@ -49,6 +56,76 @@ with open(CONF.images) as fp:
 
 conn = openstack.connect(cloud=CONF.cloud)
 glance = os_client_config.make_client("image", cloud=CONF.cloud)
+
+
+def create_keypair(conn, keypair_name):
+    keypair = conn.compute.find_keypair(keypair_name)
+
+    if not keypair:
+        logging.info("Creating new keypair")
+
+        keypair = conn.compute.create_keypair(name=keypair_name)
+
+        keypair_file = str(pathlib.Path.cwd() / keypair_name)
+
+        with open(keypair_file, 'w') as f:
+            f.write("%s" % keypair.private_key)
+        os.chmod(keypair_file, 0o400)
+
+    return keypair
+
+
+def delete_keypair(conn, keypair_name):
+    keypair = conn.compute.find_keypair(keypair_name)
+    keypair_file = str(pathlib.Path.cwd() / keypair_name)
+
+    try:
+        os.remove(keypair_file)
+    except OSError as e:
+        if e.errno != errno.ENOENT:
+            raise e
+    conn.compute.delete_keypair(keypair)
+
+
+def test_image(conn, image, name):
+    logging.info("Testing image: '%s'" % image['name'])
+
+    login = image['login']
+    image = conn.compute.find_image(name)
+    flavor = conn.compute.find_flavor(CONF.flavor)
+    network = conn.network.find_network(CONF.network)
+    keypair_name = 'test_key'
+    keypair_file = str(pathlib.Path.cwd() / keypair_name)
+    keypair = create_keypair(conn, keypair_name)
+    security_group = conn.network.find_security_group('ssh')
+
+    server = conn.compute.create_server(
+            name='test instance', image_id=image.id, flavor_id=flavor.id,
+            networks=[{"uuid": network.id}], key_name=keypair.name)
+
+    try:
+        server = conn.compute.wait_for_server(server)
+    except TimeoutError:
+        logging.warn("Waiting for Server, testing '%s', timed" % name)
+        conn.compute.delete(server)
+        delete_keypair(conn, keypair_name)
+        return 'failure'
+
+    conn.compute.add_security_group_to_server(server, security_group)
+    server_ip = server.addresses[CONF.network][0]['addr']
+
+    time.sleep(60.0)
+    test_process = subprocess.run(["ssh", "-o", "StrictHostKeyChecking no", "-i",
+                                   keypair_file, login+"@"+server_ip, "ls"])
+
+    conn.compute.delete_server(server)
+    delete_keypair(conn, keypair_name)
+
+    if test_process.returncode == 0:
+        logging.info("Image successfully tested")
+        return True
+    else:
+        return False
 
 
 def create_import_task(glance, name, image, url):
@@ -320,6 +397,12 @@ for image in images:
 
                 if not CONF.dry_run:
                     glance.images.reactivate(cloud_image.id)
+
+            if uploaded_new_latest_image and CONF.test_latest_image:
+                result = test_image(conn, image, name)
+                if not result:
+                    uploaded_new_latest_image = False
+                    continue
 
             logging.info("Checking visibility of '%s'" % name)
             if image['multi'] and image['visibility'] == 'public' and version not in sorted_versions[-3:]:
