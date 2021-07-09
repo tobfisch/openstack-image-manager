@@ -30,6 +30,7 @@ opts = [
     cfg.StrOpt('network', help='Network which should be used for the test instances', default='floating-IPv4'),
     cfg.StrOpt('flavor', help='Flavor which should be used for the test instances', default='S'),
     cfg.BoolOpt('local-processing', help='Decompress and convert images locally', default=False),
+    cfg.StrOpt('security-group', help='Security group which should used for the test instance', default='ssh'),
     cfg.StrOpt('cloud', help='Cloud name in clouds.yaml', default='images'),
     cfg.StrOpt('name', help='Image name to process', default=None),
     cfg.StrOpt('images', help='Path to the images.yml file', default='etc/images.yml'),
@@ -77,6 +78,21 @@ def create_keypair(conn, keypair_name):
     return keypair
 
 
+def create_security_group(conn, security_group_name, port_range, protocol):
+    security_group = conn.create_security_group(name=security_group_name,
+                                                description="sg for login into a test instance")
+    if type(port_range) == list:
+        port_range_min = port_range[0]
+        port_range_max = port_range[-1]
+    else:
+        port_range_min = port_range
+        port_range_max = port_range
+
+    conn.create_security_group_rule(security_group.id, protocol=protocol,
+                                    port_range_min=port_range_min, port_range_max=port_range_max)
+    return security_group
+
+
 def delete_keypair(conn, keypair_name):
     keypair = conn.compute.find_keypair(keypair_name)
     keypair_file = str(pathlib.Path.cwd() / keypair_name)
@@ -99,7 +115,11 @@ def test_image(conn, image, name):
     keypair_name = 'test_key'
     keypair_file = str(pathlib.Path.cwd() / keypair_name)
     keypair = create_keypair(conn, keypair_name)
-    security_group = conn.network.find_security_group('ssh')
+    security_group = conn.network.find_security_group(CONF.security_group)
+
+    if not security_group:
+        # create a fallback security_group
+        security_group = create_security_group(conn, CONF.security_group, 22, 'tcp')
 
     server = conn.compute.create_server(
             name='test instance', image_id=image.id, flavor_id=flavor.id,
