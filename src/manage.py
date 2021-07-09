@@ -26,6 +26,7 @@ opts = [
     cfg.BoolOpt('yes-i-really-know-what-i-do', help='Really delete images', default=False),
     cfg.BoolOpt('use-os-hidden', help='Use the os_hidden property', default=False),
     cfg.BoolOpt('test-latest-image', help='Test the latest uploaded image', default=False),
+    cfg.BoolOpt('use-floating-ip', help='Attach a floating IP to the test image', default=True),
     cfg.StrOpt('network', help='Network which should be used for the test instances', default='floating-IPv4'),
     cfg.StrOpt('flavor', help='Flavor which should be used for the test instances', default='S'),
     cfg.BoolOpt('local-processing', help='Decompress and convert images locally', default=False),
@@ -113,13 +114,16 @@ def test_image(conn, image, name):
         return 'failure'
 
     conn.compute.add_security_group_to_server(server, security_group)
-    server_ip = server.addresses[CONF.network][0]['addr']
+    if CONF.use_floating_ip:
+        server_ip = conn.add_auto_ip(server)
+    else:
+        server_ip = server.addresses[CONF.network][0]['addr']
 
     time.sleep(60.0)
     test_process = subprocess.run(["ssh", "-o", "StrictHostKeyChecking no", "-i",
                                    keypair_file, login+"@"+server_ip, "ls"])
 
-    conn.compute.delete_server(server)
+    conn.compute.delete_server(server.id, delete_ips=True)
     delete_keypair(conn, keypair_name)
 
     if test_process.returncode == 0:
