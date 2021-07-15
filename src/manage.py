@@ -7,12 +7,13 @@ import pathlib
 import errno
 import subprocess
 
-from natsort import natsorted
 from oslo_config import cfg
 import openstack
 import os_client_config
 import requests
 import yaml
+
+from natsort import natsorted
 
 PROJECT_NAME = 'images'
 CONF = cfg.CONF
