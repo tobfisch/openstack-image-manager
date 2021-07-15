@@ -27,7 +27,7 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=level, datefmt='%Y
 
 
 def get_daily_build(build_name):
-    return re.search(r'\d{8}', build_name)[0]
+    return re.search(r'\d{8}', build_name).group(0)
 
 
 def build_url(image_name, version):
@@ -65,14 +65,14 @@ def check_versions(image, versions):
                     if image['os_version']:
                         os_version = regex.search(date[0])
                         if os_version:
-                            new_versions[daily_build_version]['os_version'] = os_version[0]
+                            new_versions[daily_build_version]['os_version'] = os_version.group(0)
                         else:
                             raise ValueError("Could not retrieve OS version of the image version")
     else:
         versions_on_url = set()
         for link in soup.find_all('a'):
             if re.search(image['regex'], link.get('href')):
-                versions_on_url.add(regex.search(link.get('href'))[0])
+                versions_on_url.add(regex.search(link.get('href')).group(0))
         versions_on_url = sorted(versions_on_url)
         for version in versions_on_url:
             daily_build_version = get_daily_build(version)
