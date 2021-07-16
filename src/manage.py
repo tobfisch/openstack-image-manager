@@ -29,7 +29,6 @@ opts = [
     cfg.StrOpt('network', help='Network which should be used for the test instances', default='floating-IPv4'),
     cfg.StrOpt('flavor', help='Flavor which should be used for the test instances', default='S'),
     cfg.BoolOpt('local-processing', help='Decompress and convert images locally', default=False),
-    cfg.StrOpt('cloud', help='Cloud name in clouds.yaml', default='images'),
     cfg.StrOpt('name', help='Image name to process', default=None),
     cfg.StrOpt('images', help='Path to the images.yml file', default='etc/images.yml'),
     cfg.StrOpt('tag', help='Name of the tag used to identify managed images', default='managed_by_betacloud')
@@ -55,8 +54,8 @@ with open(CONF.images) as fp:
     data = yaml.load(fp, Loader=yaml.SafeLoader)
     images = data.get('images', [])
 
-conn = openstack.connect(cloud=CONF.cloud)
-glance = os_client_config.make_client("image", cloud=CONF.cloud)
+conn = openstack.connect()
+glance = os_client_config.make_client("image", image_api_version="2")
 
 
 def create_keypair(conn, keypair_name):
@@ -265,7 +264,6 @@ def get_images(conn, glance):
 
 # show runtime parameters
 
-logging.debug("cloud = %s" % CONF.cloud)
 logging.debug("dry-run = %s" % CONF.dry_run)
 logging.debug("images = %s" % CONF.images)
 logging.debug("tag = %s" % CONF.tag)
