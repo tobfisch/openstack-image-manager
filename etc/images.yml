@@ -16,14 +16,27 @@ images:
   status: active
   tags: []
   versions:
-  - url: https://cloud-images.ubuntu.com/focal/20210105/focal-server-cloudimg-amd64.img
-    version: '20210105'
-  - url: https://cloud-images.ubuntu.com/focal/20210630/focal-server-cloudimg-amd64.img
-    version: '20210630'
-  - url: https://cloud-images.ubuntu.com/focal/20210702/focal-server-cloudimg-amd64.img
-    version: '20210702'
   - url: https://cloud-images.ubuntu.com/focal/20210707/focal-server-cloudimg-amd64.img
     version: '20210707'
-  - url: https://cloud-images.ubuntu.com/focal/20210709/focal-server-cloudimg-amd64.img
-    version: '20210709'
   visibility: public
+
+- name: Debian 10
+  format: qcow2
+  login: debian
+  min_disk: 8
+  min_ram: 512
+  status: active
+  visibility: public
+  multi: true
+  meta:
+    architecture: x86_64
+    hw_disk_bus: scsi
+    hw_scsi_model: virtio-scsi
+    hw_watchdog_action: reset
+    os_distro: debian
+    os_version: '10'
+  tags: []
+  versions:
+  - version: '20210327'
+    url: https://cdimage.debian.org/cdimage/openstack/10.9.0/debian-10.9.0-openstack-amd64.qcow2
+    os_version: '10.9.0'
