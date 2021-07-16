@@ -58,7 +58,7 @@ with open(CONF.images) as fp:
     images = data.get('images', [])
 
 conn = openstack.connect()
-glance = os_client_config.make_client("image")
+glance = os_client_config.make_client("image", image_api_version="2")
 
 
 def create_keypair(conn, keypair_name):
@@ -289,7 +289,6 @@ def get_images(conn, glance):
 
 # show runtime parameters
 
-logging.debug("cloud = %s" % CONF.cloud)
 logging.debug("dry-run = %s" % CONF.dry_run)
 logging.debug("images = %s" % CONF.images)
 logging.debug("tag = %s" % CONF.tag)
