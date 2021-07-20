@@ -177,7 +177,7 @@ def process_local_image(glance, name, image, url):
             for chunk in response.iter_content(chunk_size=None):
                 out_file.write(chunk)
 
-    if tmp_image.suffix not in ['.xz', '.qcow2', '.raw']:
+    if tmp_image.suffix not in ['.img','.xz', '.qcow2', '.raw']:
         raise RuntimeError("Unsupported file format")
 
     if tmp_image.suffix == ".xz":
